@@ -311,7 +311,7 @@
           </div>
           <form id="tx-form">
             <div class="form-grid">
-              <div class="field"><label>Jumlah (Rp)</label><input type="number" min="0" step="1" id="tx-amount" required></div>
+              <div class="field"><label>Jumlah (Rp)</label><input type="text" inputmode="numeric" id="tx-amount" placeholder="0" required></div>
               <div class="field" id="tx-cat-field"><label id="tx-cat-label">Kategori</label>
                 <input list="cat-datalist" id="tx-category" required placeholder="mis. Makan, Transport, Gaji">
                 <datalist id="cat-datalist"></datalist>
@@ -360,7 +360,7 @@
         <div class="card">
           <form id="budget-form" class="form-grid">
             <div class="field"><label>Kategori</label><input type="text" id="budget-category" required placeholder="mis. Makan"></div>
-            <div class="field"><label>Batas per Bulan (Rp)</label><input type="number" min="0" step="1" id="budget-limit" required></div>
+            <div class="field"><label>Batas per Bulan (Rp)</label><input type="text" inputmode="numeric" id="budget-limit" placeholder="0" required></div>
             <div class="field"><button class="btn btn-primary" type="submit" style="margin-top:0;">Simpan Anggaran</button></div>
           </form>
         </div>
@@ -378,7 +378,7 @@
         <div class="card">
           <form id="goal-form" class="form-grid">
             <div class="field"><label>Nama Target</label><input type="text" id="goal-name" required placeholder="mis. Dana Darurat"></div>
-            <div class="field"><label>Target (Rp)</label><input type="number" min="0" step="1" id="goal-target" required></div>
+            <div class="field"><label>Target (Rp)</label><input type="text" inputmode="numeric" id="goal-target" placeholder="0" required></div>
             <div class="field"><label>Tenggat (opsional)</label><input type="date" id="goal-date"></div>
             <div class="field"><label>Rekening (opsional)</label>
               <select id="goal-account"><option value="">Tanpa rekening</option></select>
@@ -407,6 +407,15 @@ let TREND_CHART = null;
 
 const IDR = n => "Rp " + Math.round(n||0).toLocaleString("id-ID");
 const todayISO = () => new Date().toISOString().slice(0,10);
+function attachMoneyFormat(el){
+  el.addEventListener('input', () => {
+    const raw = el.value.replace(/[^\d]/g,'');
+    el.value = raw ? Number(raw).toLocaleString('id-ID') : '';
+  });
+}
+function moneyValue(el){
+  return Number((el.value||'').replace(/[^\d]/g,'')) || 0;
+}
 const toast = msg => {
   const t = document.getElementById('toast');
   t.textContent = msg; t.classList.add('show');
@@ -507,6 +516,7 @@ let ALL_INCOME = [], ALL_EXPENSE = [], ALL_BUDGETS = [], ALL_GOALS = [], ALL_ACC
 async function boot(){
   fillMonthSelect();
   document.getElementById('tx-date').value = todayISO();
+  [document.getElementById('tx-amount'), document.getElementById('budget-limit'), document.getElementById('goal-target')].forEach(attachMoneyFormat);
   await reloadAll();
   wireForms();
 }
@@ -592,6 +602,7 @@ function renderAccounts(){
   });
   el.querySelectorAll('.del-account').forEach(btn=>{
     btn.onclick = async () => {
+      if(!confirm('Yakin mau hapus rekening ini? Transaksi yang terhubung tidak ikut terhapus.')) return;
       await sb.from('accounts').delete().eq('id', btn.dataset.id);
       toast('Rekening dihapus'); await reloadAll();
     };
@@ -604,6 +615,20 @@ function renderBudgets(expenseMonth, elId, compact){
   if(ALL_BUDGETS.length === 0){ el.innerHTML = '<div class="empty">Belum ada anggaran. Tambahkan di halaman Anggaran.</div>'; return; }
   const spentByCat = {};
   expenseMonth.filter(e=>!e.is_transfer).forEach(e=>{ spentByCat[e.category] = (spentByCat[e.category]||0) + Number(e.amount); });
+
+  const totalLimit = ALL_BUDGETS.reduce((s,b)=>s+Number(b.monthly_limit),0);
+  const totalSpent = ALL_BUDGETS.reduce((s,b)=>s+(spentByCat[b.category]||0),0);
+  const totalPct = Math.min(100, (totalSpent/totalLimit)*100 || 0);
+  const totalOver = totalSpent > totalLimit;
+  const totalItem = document.createElement('div');
+  totalItem.className = 'bar-item';
+  totalItem.style.cssText = 'margin-bottom:18px;padding-bottom:16px;border-bottom:1px solid var(--line);';
+  totalItem.innerHTML = `
+    <div class="bar-top"><span class="cat">Total Semua Anggaran</span>
+      <span class="nums">${IDR(totalSpent)} / ${IDR(totalLimit)}</span></div>
+    <div class="bar-track"><div class="bar-fill ${totalOver?'over':''}" style="width:${totalPct}%"></div></div>
+  `;
+  el.appendChild(totalItem);
 
   ALL_BUDGETS.forEach(b=>{
     const spent = spentByCat[b.category] || 0;
@@ -623,6 +648,7 @@ function renderBudgets(expenseMonth, elId, compact){
   if(!compact){
     el.querySelectorAll('.del-budget').forEach(btn=>{
       btn.onclick = async () => {
+        if(!confirm('Yakin mau hapus anggaran ini?')) return;
         await sb.from('budgets').delete().eq('id', btn.dataset.id);
         toast('Anggaran dihapus'); await reloadAll();
       };
@@ -672,6 +698,7 @@ function renderTxList(incomeMonth, expenseMonth){
   });
   el.querySelectorAll('.del').forEach(btn=>{
     btn.onclick = async () => {
+      if(!confirm('Yakin mau hapus transaksi ini?')) return;
       await sb.from(btn.dataset.table).delete().eq('id', btn.dataset.id);
       toast('Transaksi dihapus'); await reloadAll();
     };
@@ -691,19 +718,21 @@ function renderGoals(){
         <span class="nums">${IDR(g.current_amount)} / ${IDR(g.target_amount)}</span></div>
       <div class="bar-track"><div class="bar-fill goal" style="width:${pct}%"></div></div>
       <div class="form-grid" style="margin-top:8px;grid-template-columns:1fr auto auto;">
-        <input type="number" min="0" placeholder="Tambah dana (Rp)" class="goal-add-input" style="padding:7px 10px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;">
+        <input type="text" inputmode="numeric" placeholder="Tambah dana (Rp)" class="goal-add-input" style="padding:7px 10px;border:1px solid var(--line);border-radius:6px;font-size:12.5px;">
         <button class="btn btn-ghost goal-add-btn" style="padding:7px 12px;font-size:12.5px;">Tambah</button>
         <button class="btn btn-ghost del-goal" style="padding:7px 12px;font-size:12.5px;color:var(--terracotta);">Hapus</button>
       </div>
     `;
     const input = item.querySelector('.goal-add-input');
+    attachMoneyFormat(input);
     item.querySelector('.goal-add-btn').onclick = async () => {
-      const v = Number(input.value);
+      const v = moneyValue(input);
       if(!v) return;
       await sb.from('savings_goals').update({ current_amount: Number(g.current_amount)+v }).eq('id', g.id);
       toast('Dana ditambahkan'); await reloadAll();
     };
     item.querySelector('.del-goal').onclick = async () => {
+      if(!confirm('Yakin mau hapus target nabung ini?')) return;
       await sb.from('savings_goals').delete().eq('id', g.id);
       toast('Target dihapus'); await reloadAll();
     };
@@ -760,7 +789,7 @@ function wireForms(){
 
   document.getElementById('tx-form').onsubmit = async (e) => {
     e.preventDefault();
-    const amount = Number(document.getElementById('tx-amount').value);
+    const amount = moneyValue(document.getElementById('tx-amount'));
     const category = document.getElementById('tx-category').value.trim();
     const date = document.getElementById('tx-date').value;
     const note = document.getElementById('tx-note').value.trim() || null;
@@ -784,7 +813,7 @@ function wireForms(){
   document.getElementById('budget-form').onsubmit = async (e) => {
     e.preventDefault();
     const category = document.getElementById('budget-category').value.trim();
-    const monthly_limit = Number(document.getElementById('budget-limit').value);
+    const monthly_limit = moneyValue(document.getElementById('budget-limit'));
     if(!category || !monthly_limit) return;
     const { error } = await sb.from('budgets')
       .upsert({ user_id: CURRENT_USER.id, category, monthly_limit }, { onConflict: 'user_id,category' });
@@ -797,7 +826,7 @@ function wireForms(){
   document.getElementById('goal-form').onsubmit = async (e) => {
     e.preventDefault();
     const name = document.getElementById('goal-name').value.trim();
-    const target_amount = Number(document.getElementById('goal-target').value);
+    const target_amount = moneyValue(document.getElementById('goal-target'));
     const target_date = document.getElementById('goal-date').value || null;
     const account_id = document.getElementById('goal-account').value || null;
     if(!name || !target_amount) return;
