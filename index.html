@@ -77,6 +77,11 @@
     background:var(--paper); font-size:14px; color:var(--ink); font-family:'Inter',sans-serif;
   }
   .field input:focus{outline:none;border-color:var(--forest);}
+  .field select{
+    width:100%;padding:10px 12px;border:1px solid var(--line);border-radius:7px;
+    background:var(--paper); font-size:14px; color:var(--ink); font-family:'Inter',sans-serif;
+  }
+  .field select:focus{outline:none;border-color:var(--forest);}
   .btn{
     display:inline-flex;align-items:center;justify-content:center;gap:6px;
     padding:10px 16px;border-radius:7px;border:1px solid transparent;
@@ -254,6 +259,7 @@
       <ul class="navlist">
         <li><button class="nav-btn active" data-view="dashboard"><span class="dot"></span>Ringkasan</button></li>
         <li><button class="nav-btn" data-view="transaksi"><span class="dot"></span>Transaksi</button></li>
+        <li><button class="nav-btn" data-view="rekening"><span class="dot"></span>Rekening</button></li>
         <li><button class="nav-btn" data-view="anggaran"><span class="dot"></span>Anggaran</button></li>
         <li><button class="nav-btn" data-view="target"><span class="dot"></span>Target Nabung</button></li>
       </ul>
@@ -311,6 +317,9 @@
                 <datalist id="cat-datalist"></datalist>
               </div>
               <div class="field"><label>Tanggal</label><input type="date" id="tx-date" required></div>
+              <div class="field"><label>Rekening (opsional)</label>
+                <select id="tx-account"><option value="">Tanpa rekening</option></select>
+              </div>
               <div class="field"><label>Catatan (opsional)</label><input type="text" id="tx-note" placeholder="opsional"></div>
               <div class="field"><button class="btn btn-primary" type="submit" style="margin-top:0;">Simpan</button></div>
             </div>
@@ -320,6 +329,23 @@
         <div class="card">
           <div class="card-head"><h2>Semua Transaksi — <span id="tx-month-label"></span></h2></div>
           <div id="tx-list"></div>
+        </div>
+      </div>
+
+      <!-- ---------- REKENING ---------- -->
+      <div class="view" id="view-rekening">
+        <div class="main-head"><div><h1>Rekening</h1><div class="sub">Daftar ATM/bank & saldo masing-masing, dihitung otomatis</div></div></div>
+
+        <div class="card">
+          <form id="account-form" class="form-grid">
+            <div class="field"><label>Nama Rekening/ATM</label><input type="text" id="account-name" required placeholder="mis. BCA, Mandiri, Tunai"></div>
+            <div class="field"><button class="btn btn-primary" type="submit" style="margin-top:0;">Tambah Rekening</button></div>
+          </form>
+        </div>
+
+        <div class="card">
+          <div class="card-head"><h2>Saldo per Rekening</h2></div>
+          <div id="account-list"></div>
         </div>
       </div>
 
@@ -350,6 +376,9 @@
             <div class="field"><label>Nama Target</label><input type="text" id="goal-name" required placeholder="mis. Dana Darurat"></div>
             <div class="field"><label>Target (Rp)</label><input type="number" min="0" step="1" id="goal-target" required></div>
             <div class="field"><label>Tenggat (opsional)</label><input type="date" id="goal-date"></div>
+            <div class="field"><label>Rekening (opsional)</label>
+              <select id="goal-account"><option value="">Tanpa rekening</option></select>
+            </div>
             <div class="field"><button class="btn btn-primary" type="submit" style="margin-top:0;">Buat Target</button></div>
           </form>
         </div>
@@ -469,7 +498,7 @@ async function fetchAll(table, orderCol){
   return data;
 }
 
-let ALL_INCOME = [], ALL_EXPENSE = [], ALL_BUDGETS = [], ALL_GOALS = [];
+let ALL_INCOME = [], ALL_EXPENSE = [], ALL_BUDGETS = [], ALL_GOALS = [], ALL_ACCOUNTS = [];
 
 async function boot(){
   fillMonthSelect();
@@ -479,11 +508,30 @@ async function boot(){
 }
 
 async function reloadAll(){
-  [ALL_INCOME, ALL_EXPENSE, ALL_BUDGETS, ALL_GOALS] = await Promise.all([
-    fetchAll('incomes','date'), fetchAll('expenses','date'), fetchAll('budgets','created_at'), fetchAll('savings_goals','created_at')
+  [ALL_INCOME, ALL_EXPENSE, ALL_BUDGETS, ALL_GOALS, ALL_ACCOUNTS] = await Promise.all([
+    fetchAll('incomes','date'), fetchAll('expenses','date'), fetchAll('budgets','created_at'), fetchAll('savings_goals','created_at'), fetchAll('accounts','created_at')
   ]);
   refreshCategoryDatalist();
+  refreshAccountSelects();
   renderAll();
+}
+
+function refreshAccountSelects(){
+  ['tx-account','goal-account'].forEach(id=>{
+    const sel = document.getElementById(id);
+    const current = sel.value;
+    sel.innerHTML = '<option value="">Tanpa rekening</option>';
+    ALL_ACCOUNTS.forEach(a=>{
+      const o = document.createElement('option'); o.value = a.id; o.textContent = a.name;
+      sel.appendChild(o);
+    });
+    sel.value = current;
+  });
+}
+
+function accountName(id){
+  const a = ALL_ACCOUNTS.find(x=>x.id===id);
+  return a ? a.name : null;
 }
 
 function refreshCategoryDatalist(){
@@ -516,6 +564,35 @@ function renderAll(){
   renderTxList(incomeMonth, expenseMonth);
   renderGoals();
   renderTrendChart();
+  renderAccounts();
+}
+
+function renderAccounts(){
+  const el = document.getElementById('account-list');
+  el.innerHTML = '';
+  if(ALL_ACCOUNTS.length === 0){ el.innerHTML = '<div class="empty">Belum ada rekening. Tambahkan di atas.</div>'; return; }
+  ALL_ACCOUNTS.forEach(acc=>{
+    const inc = ALL_INCOME.filter(i=>i.account_id===acc.id).reduce((s,i)=>s+Number(i.amount),0);
+    const exp = ALL_EXPENSE.filter(e=>e.account_id===acc.id).reduce((s,e)=>s+Number(e.amount),0);
+    const goals = ALL_GOALS.filter(g=>g.account_id===acc.id).reduce((s,g)=>s+Number(g.current_amount),0);
+    const balance = inc - exp + goals;
+    const row = document.createElement('div');
+    row.className = 'ledger-row';
+    row.innerHTML = `
+      <span class="tag">Rekening</span>
+      <span class="desc">${acc.name}</span>
+      <span class="leader"></span>
+      <span class="amt ${balance>=0?'in':'out'}">${IDR(balance)}</span>
+      <button class="del del-account" data-id="${acc.id}">✕</button>
+    `;
+    el.appendChild(row);
+  });
+  el.querySelectorAll('.del-account').forEach(btn=>{
+    btn.onclick = async () => {
+      await sb.from('accounts').delete().eq('id', btn.dataset.id);
+      toast('Rekening dihapus'); await reloadAll();
+    };
+  });
 }
 
 function renderBudgets(expenseMonth, elId, compact){
@@ -579,9 +656,10 @@ function renderTxList(incomeMonth, expenseMonth){
   rows.forEach(r=>{
     const row = document.createElement('div');
     row.className = 'ledger-row';
+    const accLabel = accountName(r.account_id);
     row.innerHTML = `
       <span class="tag">${r.kind==='in'?'Masuk':'Keluar'}</span>
-      <span class="desc">${r.desc}${r.note?' · '+r.note:''}</span>
+      <span class="desc">${r.desc}${accLabel?' · '+accLabel:''}${r.note?' · '+r.note:''}</span>
       <span class="leader"></span>
       <span class="date">${r.date}</span>
       <span class="amt ${r.kind}">${r.kind==='in'?'+':'-'} ${IDR(r.amount)}</span>
@@ -606,7 +684,7 @@ function renderGoals(){
     const item = document.createElement('div');
     item.className = 'bar-item';
     item.innerHTML = `
-      <div class="bar-top"><span class="cat">${g.name}${g.target_date?' · tenggat '+g.target_date:''}</span>
+      <div class="bar-top"><span class="cat">${g.name}${accountName(g.account_id)?' · '+accountName(g.account_id):''}${g.target_date?' · tenggat '+g.target_date:''}</span>
         <span class="nums">${IDR(g.current_amount)} / ${IDR(g.target_amount)}</span></div>
       <div class="bar-track"><div class="bar-fill goal" style="width:${pct}%"></div></div>
       <div class="form-grid" style="margin-top:8px;grid-template-columns:1fr auto auto;">
@@ -683,12 +761,13 @@ function wireForms(){
     const category = document.getElementById('tx-category').value.trim();
     const date = document.getElementById('tx-date').value;
     const note = document.getElementById('tx-note').value.trim() || null;
+    const account_id = document.getElementById('tx-account').value || null;
     if(!amount || !category || !date) return;
 
     const table = txType === 'expense' ? 'expenses' : 'incomes';
     const row = txType === 'expense'
-      ? { user_id: CURRENT_USER.id, amount, category, date, note }
-      : { user_id: CURRENT_USER.id, amount, source: category, date, note };
+      ? { user_id: CURRENT_USER.id, amount, category, date, note, account_id }
+      : { user_id: CURRENT_USER.id, amount, source: category, date, note, account_id };
 
     const { error } = await sb.from(table).insert(row);
     if(error){ toast('Gagal menyimpan: '+error.message); return; }
@@ -716,11 +795,23 @@ function wireForms(){
     const name = document.getElementById('goal-name').value.trim();
     const target_amount = Number(document.getElementById('goal-target').value);
     const target_date = document.getElementById('goal-date').value || null;
+    const account_id = document.getElementById('goal-account').value || null;
     if(!name || !target_amount) return;
     const { error } = await sb.from('savings_goals')
-      .insert({ user_id: CURRENT_USER.id, name, target_amount, target_date, current_amount: 0 });
+      .insert({ user_id: CURRENT_USER.id, name, target_amount, target_date, current_amount: 0, account_id });
     if(error){ toast('Gagal menyimpan: '+error.message); return; }
     toast('Target dibuat');
+    e.target.reset();
+    await reloadAll();
+  };
+
+  document.getElementById('account-form').onsubmit = async (e) => {
+    e.preventDefault();
+    const name = document.getElementById('account-name').value.trim();
+    if(!name) return;
+    const { error } = await sb.from('accounts').insert({ user_id: CURRENT_USER.id, name });
+    if(error){ toast('Gagal menyimpan: '+error.message); return; }
+    toast('Rekening ditambahkan');
     e.target.reset();
     await reloadAll();
   };
