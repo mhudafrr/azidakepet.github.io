@@ -1,1 +1,1 @@
-# azidakepet.github.io
+# freedom.github.io
