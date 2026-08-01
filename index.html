@@ -210,6 +210,7 @@
   }
   .type-toggle button.active.exp{background:rgba(166,84,58,.12);color:var(--terracotta);border-color:var(--terracotta);}
   .type-toggle button.active.inc{background:rgba(110,156,130,.15);color:var(--forest-light);border-color:var(--forest-light);}
+  .type-toggle button:disabled{opacity:.4;cursor:not-allowed;}
 
   canvas#trend-chart{max-height:260px;}
 
@@ -302,29 +303,44 @@
 
       <!-- ---------- TRANSAKSI ---------- -->
       <div class="view" id="view-transaksi">
-        <div class="main-head"><div><h1>Transaksi</h1><div class="sub">Catat gaji dan pengeluaranmu</div></div></div>
+        <div class="main-head"><div><h1>Transaksi</h1><div class="sub">Catat gaji, pengeluaran, dan transfer antar rekening</div></div></div>
 
         <div class="card">
           <div class="type-toggle">
-            <button id="toggle-exp" class="active exp">Pengeluaran</button>
-            <button id="toggle-inc" class="inc">Pemasukan</button>
+            <button id="toggle-exp" class="active exp" type="button">Pengeluaran</button>
+            <button id="toggle-inc" class="inc" type="button">Pemasukan</button>
           </div>
+
+          <div class="field" style="display:flex;align-items:center;gap:7px;margin-bottom:16px;">
+            <input type="checkbox" id="tx-transfer" style="width:16px;height:16px;">
+            <label for="tx-transfer" style="margin:0;font-size:13px;line-height:1.3;">Ini transfer antar rekening sendiri (BCA → BRI, dsb — tidak dihitung di Ringkasan)</label>
+          </div>
+
           <form id="tx-form">
             <div class="form-grid">
               <div class="field"><label>Jumlah (Rp)</label><input type="text" inputmode="numeric" id="tx-amount" placeholder="0" required></div>
+
               <div class="field" id="tx-cat-field"><label id="tx-cat-label">Kategori</label>
                 <input list="cat-datalist" id="tx-category" required placeholder="mis. Makan, Transport, Gaji">
                 <datalist id="cat-datalist"></datalist>
               </div>
+
               <div class="field"><label>Tanggal</label><input type="date" id="tx-date" required></div>
-              <div class="field"><label>Rekening (opsional)</label>
+
+              <!-- shown when NOT transfer -->
+              <div class="field" id="tx-account-field"><label>Rekening (opsional)</label>
                 <select id="tx-account"><option value="">Tanpa rekening</option></select>
               </div>
-              <div class="field"><label>Catatan (opsional)</label><input type="text" id="tx-note" placeholder="opsional"></div>
-              <div class="field" style="display:flex;align-items:center;gap:7px;padding-bottom:9px;">
-                <input type="checkbox" id="tx-transfer" style="width:16px;height:16px;">
-                <label for="tx-transfer" style="margin:0;font-size:12px;line-height:1.3;">Transfer antar rekening sendiri (tidak dihitung di Ringkasan)</label>
+
+              <!-- shown when transfer -->
+              <div class="field" id="tx-account-from-field" style="display:none;"><label>Dari Rekening</label>
+                <select id="tx-account-from"><option value="">Pilih rekening</option></select>
               </div>
+              <div class="field" id="tx-account-to-field" style="display:none;"><label>Ke Rekening</label>
+                <select id="tx-account-to"><option value="">Pilih rekening</option></select>
+              </div>
+
+              <div class="field"><label>Catatan (opsional)</label><input type="text" id="tx-note" placeholder="opsional"></div>
               <div class="field"><button class="btn btn-primary" type="submit" style="margin-top:0;">Simpan</button></div>
             </div>
           </form>
@@ -531,10 +547,11 @@ async function reloadAll(){
 }
 
 function refreshAccountSelects(){
-  ['tx-account','goal-account'].forEach(id=>{
+  ['tx-account','tx-account-from','tx-account-to','goal-account'].forEach(id=>{
     const sel = document.getElementById(id);
     const current = sel.value;
-    sel.innerHTML = '<option value="">Tanpa rekening</option>';
+    const placeholder = sel.options[0] ? sel.options[0].outerHTML : '<option value="">Tanpa rekening</option>';
+    sel.innerHTML = placeholder;
     ALL_ACCOUNTS.forEach(a=>{
       const o = document.createElement('option'); o.value = a.id; o.textContent = a.name;
       sel.appendChild(o);
@@ -784,29 +801,88 @@ function wireForms(){
   const toggleExp = document.getElementById('toggle-exp');
   const toggleInc = document.getElementById('toggle-inc');
   const catLabel = document.getElementById('tx-cat-label');
+  const catField = document.getElementById('tx-cat-field');
+  const catInput = document.getElementById('tx-category');
+  const transferCheck = document.getElementById('tx-transfer');
+
+  const accountField = document.getElementById('tx-account-field');
+  const accountFromField = document.getElementById('tx-account-from-field');
+  const accountToField = document.getElementById('tx-account-to-field');
+  const accountFromSel = document.getElementById('tx-account-from');
+  const accountToSel = document.getElementById('tx-account-to');
+
   toggleExp.onclick = () => { txType='expense'; toggleExp.classList.add('active'); toggleInc.classList.remove('active'); catLabel.textContent='Kategori'; };
   toggleInc.onclick = () => { txType='income'; toggleInc.classList.add('active'); toggleExp.classList.remove('active'); catLabel.textContent='Sumber'; };
+
+  function applyTransferUI(){
+    const isTransfer = transferCheck.checked;
+    toggleExp.disabled = isTransfer;
+    toggleInc.disabled = isTransfer;
+    accountField.style.display = isTransfer ? 'none' : '';
+    accountFromField.style.display = isTransfer ? '' : 'none';
+    accountToField.style.display = isTransfer ? '' : 'none';
+    accountFromSel.required = isTransfer;
+    accountToSel.required = isTransfer;
+
+    if(isTransfer){
+      catField.style.display = 'none';
+      catInput.required = false;
+    } else {
+      catField.style.display = '';
+      catInput.required = true;
+    }
+  }
+  transferCheck.onchange = applyTransferUI;
+  applyTransferUI();
 
   document.getElementById('tx-form').onsubmit = async (e) => {
     e.preventDefault();
     const amount = moneyValue(document.getElementById('tx-amount'));
-    const category = document.getElementById('tx-category').value.trim();
     const date = document.getElementById('tx-date').value;
     const note = document.getElementById('tx-note').value.trim() || null;
-    const account_id = document.getElementById('tx-account').value || null;
-    const is_transfer = document.getElementById('tx-transfer').checked;
-    if(!amount || !category || !date) return;
+    if(!amount || !date) return;
 
-    const table = txType === 'expense' ? 'expenses' : 'incomes';
-    const row = txType === 'expense'
-      ? { user_id: CURRENT_USER.id, amount, category, date, note, account_id, is_transfer }
-      : { user_id: CURRENT_USER.id, amount, source: category, date, note, account_id, is_transfer };
+    if(transferCheck.checked){
+      const fromId = accountFromSel.value;
+      const toId = accountToSel.value;
+      if(!fromId || !toId){ toast('Pilih rekening asal dan tujuan'); return; }
+      if(fromId === toId){ toast('Rekening asal dan tujuan harus berbeda'); return; }
 
-    const { error } = await sb.from(table).insert(row);
-    if(error){ toast('Gagal menyimpan: '+error.message); return; }
-    toast('Transaksi disimpan');
+      const fromName = accountName(fromId);
+      const toName = accountName(toId);
+
+      const { error: errOut } = await sb.from('expenses').insert({
+        user_id: CURRENT_USER.id, amount, category: 'Transfer ke '+toName,
+        date, note, account_id: fromId, is_transfer: true
+      });
+      if(errOut){ toast('Gagal menyimpan: '+errOut.message); return; }
+
+      const { error: errIn } = await sb.from('incomes').insert({
+        user_id: CURRENT_USER.id, amount, source: 'Transfer dari '+fromName,
+        date, note, account_id: toId, is_transfer: true
+      });
+      if(errIn){ toast('Gagal menyimpan: '+errIn.message); return; }
+
+      toast('Transfer disimpan');
+    } else {
+      const category = catInput.value.trim();
+      const account_id = document.getElementById('tx-account').value || null;
+      if(!category) return;
+
+      const table = txType === 'expense' ? 'expenses' : 'incomes';
+      const row = txType === 'expense'
+        ? { user_id: CURRENT_USER.id, amount, category, date, note, account_id, is_transfer: false }
+        : { user_id: CURRENT_USER.id, amount, source: category, date, note, account_id, is_transfer: false };
+
+      const { error } = await sb.from(table).insert(row);
+      if(error){ toast('Gagal menyimpan: '+error.message); return; }
+      toast('Transaksi disimpan');
+    }
+
     e.target.reset();
     document.getElementById('tx-date').value = todayISO();
+    transferCheck.checked = false;
+    applyTransferUI();
     await reloadAll();
   };
 
